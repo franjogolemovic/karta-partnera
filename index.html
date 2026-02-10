@@ -20,7 +20,7 @@
       border: 1px solid #ddd;
       border-radius: 10px;
       padding: 10px;
-      max-width: 900px;
+      max-width: 1000px;
     }
     .topbar input {
       flex: 1;
@@ -44,7 +44,7 @@
 
 <body>
   <div class="topbar">
-    <input id="q" type="text" placeholder="Pretraži po nazivu / mjestu / adresi..." />
+    <input id="q" type="text" placeholder="Pretraži po ID / nazivu / mjestu / adresi..." />
     <button id="btnReset" type="button">Reset</button>
     <span class="status" id="status">Učitavam podatke…</span>
   </div>
@@ -53,11 +53,8 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    // Tvoj CSV link (kako si poslao)
-    const SHEET_CSV_URL =
-      "https://docs.google.com/spreadsheets/d/e/2PACX-1vR-5B8-SGXI7FSbUA6gsgpKfECUKq2OnVCj4qM8npiWkrH5gQL00PAfv_NsazCgBNDEv6kwwxOg4Z_x/pub?output=csv";
+    const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR-5B8-SGXI7FSbUA6gsgpKfECUKq2OnVCj4qM8npiWkrH5gQL00PAfv_NsazCgBNDEv6kwwxOg4Z_x/pub?output=csv";
 
-    // Inicijalna karta (Hrvatska)
     const map = L.map("map").setView([45.1, 15.2], 7);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "© OpenStreetMap"
@@ -68,9 +65,8 @@
     const qEl = document.getElementById("q");
     const btnReset = document.getElementById("btnReset");
 
-    let items = []; // svi partneri kao objekti
+    let items = [];
 
-    // Robustni CSV parser (podržava navodnike i zareze u tekstu)
     function parseCSV(text) {
       const rows = [];
       let row = [];
@@ -114,13 +110,16 @@
         .replaceAll("'", "&#039;");
     }
 
-    function findColIndex(header, candidates) {
+    function findColIndex(header, name) {
       const h = header.map(x => normalize(x));
-      for (const c of candidates) {
-        const i = h.indexOf(normalize(c));
-        if (i !== -1) return i;
-      }
-      return -1;
+      return h.indexOf(normalize(name));
+    }
+
+    function normalizeWeb(url) {
+      const u = String(url ?? "").trim();
+      if (!u) return "";
+      if (u.startsWith("http://") || u.startsWith("https://")) return u;
+      return "https://" + u;
     }
 
     function renderMarkers(filterText) {
@@ -131,30 +130,31 @@
         ? items.filter(it => normalize(it.search).includes(ft))
         : items.slice();
 
-      // Dodaj markere
       for (const it of filtered) {
-        const popupHtml = `
+        const webLink = it.web ? normalizeWeb(it.web) : "";
+
+        const html = `
           <div class="popup">
             <b>${escHtml(it.naziv)}</b><br>
             ${escHtml(it.adresa)}<br>
             ${escHtml(it.pbr)} ${escHtml(it.mjesto)}<br>
             <hr>
+            ${it.id ? `<b>ID:</b> ${escHtml(it.id)}<br>` : ""}
+            ${it.osoba ? `<b>Odgovorna osoba:</b> ${escHtml(it.osoba)}<br>` : ""}
             ${it.tel ? `<b>Telefon:</b> ${escHtml(it.tel)}<br>` : ""}
             ${it.email ? `<b>E-mail:</b> ${escHtml(it.email)}<br>` : ""}
-            ${it.web ? `<b>Web:</b> <a href="${escHtml(it.web)}" target="_blank" rel="noopener">${escHtml(it.web)}</a><br>` : ""}
-            ${it.opis ? `<hr><div>${escHtml(it.opis)}</div>` : ""}
+            ${it.web ? `<b>Web:</b> <a href="${escHtml(webLink)}" target="_blank" rel="noopener">${escHtml(it.web)}</a><br>` : ""}
           </div>
         `;
 
         L.marker([it.lat, it.lon])
-          .bindTooltip(it.naziv || "Partner")
-          .bindPopup(popupHtml, { maxWidth: 380 })
+          .bindTooltip((it.id ? (it.id + " - ") : "") + (it.naziv || "Partner"))
+          .bindPopup(html, { maxWidth: 420 })
           .addTo(layer);
       }
 
       statusEl.textContent = `Prikazano: ${filtered.length} / ${items.length}`;
 
-      // Ako imamo barem 1 marker, fitaj view
       if (filtered.length > 0) {
         const bounds = L.latLngBounds(filtered.map(it => [it.lat, it.lon]));
         map.fitBounds(bounds.pad(0.12));
@@ -173,20 +173,20 @@
 
       const header = table[0];
 
-      // Pokušaj pronaći stupce (prilagođeno različitim nazivima)
-      const iNaziv  = findColIndex(header, ["Naziv", "Naziv_firme", "Firma", "Company"]);
-      const iAdresa = findColIndex(header, ["Adresa", "Ulica", "Address"]);
-      const iMjesto = findColIndex(header, ["Mjesto", "Grad", "City"]);
-      const iPbr    = findColIndex(header, ["Poštanski broj", "Postanski broj", "PBR", "Zip", "Postal"]);
-      const iLat    = findColIndex(header, ["Latitude", "Lat"]);
-      const iLon    = findColIndex(header, ["Longitude", "Lon", "Lng"]);
-      const iTel    = findColIndex(header, ["Telefon", "Tel", "Phone"]);
-      const iEmail  = findColIndex(header, ["E-mail", "Email", "Mail"]);
-      const iWeb    = findColIndex(header, ["Web", "Website", "URL"]);
-      const iOpis   = findColIndex(header, ["Opis", "Napomena", "Description"]);
+      const iID     = findColIndex(header, "ID");               // opcionalno
+      const iNaziv  = findColIndex(header, "Naziv");
+      const iAdresa = findColIndex(header, "Adresa");
+      const iMjesto = findColIndex(header, "Mjesto");
+      const iPbr    = findColIndex(header, "Poštanski broj");
+      const iOsoba  = findColIndex(header, "Odgovorna osoba");
+      const iTel    = findColIndex(header, "Telefon");
+      const iEmail  = findColIndex(header, "E-mail");
+      const iWeb    = findColIndex(header, "Web");
+      const iLat    = findColIndex(header, "Latitude");
+      const iLon    = findColIndex(header, "Longitude");
 
-      if (iLat === -1 || iLon === -1) {
-        throw new Error("U tablici ne nalazim stupce 'Latitude' i 'Longitude'.");
+      if (iNaziv === -1 || iAdresa === -1 || iMjesto === -1 || iPbr === -1 || iLat === -1 || iLon === -1) {
+        throw new Error("Nedostaje obavezan stupac: Naziv, Adresa, Mjesto, Poštanski broj, Latitude, Longitude.");
       }
 
       const out = [];
@@ -197,21 +197,22 @@
         const lon = toNum(row[iLon]);
         if (lat === null || lon === null) continue;
 
-        const naziv  = iNaziv  !== -1 ? (row[iNaziv]  ?? "") : "";
-        const adresa = iAdresa !== -1 ? (row[iAdresa] ?? "") : "";
-        const mjesto = iMjesto !== -1 ? (row[iMjesto] ?? "") : "";
-        const pbr    = iPbr    !== -1 ? (row[iPbr]    ?? "") : "";
+        const id     = iID    !== -1 ? (row[iID] ?? "") : "";
+        const naziv  = row[iNaziv]  ?? "";
+        const adresa = row[iAdresa] ?? "";
+        const mjesto = row[iMjesto] ?? "";
+        const pbr    = row[iPbr]    ?? "";
 
-        const tel   = iTel   !== -1 ? (row[iTel]   ?? "") : "";
-        const email = iEmail !== -1 ? (row[iEmail] ?? "") : "";
-        const web   = iWeb   !== -1 ? (row[iWeb]   ?? "") : "";
-        const opis  = iOpis  !== -1 ? (row[iOpis]  ?? "") : "";
+        const osoba  = iOsoba !== -1 ? (row[iOsoba] ?? "") : "";
+        const tel    = iTel   !== -1 ? (row[iTel]   ?? "") : "";
+        const email  = iEmail !== -1 ? (row[iEmail] ?? "") : "";
+        const web    = iWeb   !== -1 ? (row[iWeb]   ?? "") : "";
 
         out.push({
           lat, lon,
-          naziv, adresa, mjesto, pbr,
-          tel, email, web, opis,
-          search: `${naziv} ${adresa} ${mjesto} ${pbr} ${tel} ${email} ${web} ${opis}`
+          id, naziv, adresa, mjesto, pbr,
+          osoba, tel, email, web,
+          search: `${id} ${naziv} ${adresa} ${mjesto} ${pbr} ${osoba} ${tel} ${email} ${web}`
         });
       }
 
@@ -225,11 +226,9 @@
       renderMarkers(qEl.value);
     }
 
-    // Učitavanje + jednostavna pretraga
     qEl.addEventListener("input", () => renderMarkers(qEl.value));
     btnReset.addEventListener("click", () => { qEl.value = ""; renderMarkers(""); });
 
-    // Auto-refresh (svakih 60 sek) – kad dodaš partnera u Sheet, samo pričekaj ili refreshaj stranicu
     setInterval(() => {
       loadData().catch(err => {
         console.error(err);
@@ -245,3 +244,4 @@
   </script>
 </body>
 </html>
+
