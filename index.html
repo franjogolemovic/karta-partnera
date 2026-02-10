@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="hr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Karta partnera</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100vh; }
+    .popup { font-family: Arial, sans-serif; font-size: 13px; line-height: 1.35; }
+    .popup hr { margin: 6px 0; }
+    .topbar {
+      position: absolute; z-index: 999;
+      top: 10px; left: 10px; right: 10px;
+      display: flex; gap: 8px; flex-wrap: wrap;
+      align-items: center;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 10px;
+      max-width: 900px;
+    }
+    .topbar input {
+      flex: 1;
+      min-width: 220px;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .topbar button {
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .status { font-size: 13px; color: #333; }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <input id="q" type="text" placeholder="Pretraži po nazivu / mjestu / adresi..." />
+    <button id="btnReset" type="button">Reset</button>
+    <span class="status" id="status">Učitavam podatke…</span>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Tvoj CSV link (kako si poslao)
+    const SHEET_CSV_URL =
+      "https://docs.google.com/spreadsheets/d/e/2PACX-1vR-5B8-SGXI7FSbUA6gsgpKfECUKq2OnVCj4qM8npiWkrH5gQL00PAfv_NsazCgBNDEv6kwwxOg4Z_x/pub?output=csv";
+
+    // Inicijalna karta (Hrvatska)
+    const map = L.map("map").setView([45.1, 15.2], 7);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap"
+    }).addTo(map);
+
+    const layer = L.layerGroup().addTo(map);
+    const statusEl = document.getElementById("status");
+    const qEl = document.getElementById("q");
+    const btnReset = document.getElementById("btnReset");
+
+    let items = []; // svi partneri kao objekti
+
+    // Robustni CSV parser (podržava navodnike i zareze u tekstu)
+    function parseCSV(text) {
+      const rows = [];
+      let row = [];
+      let cur = "";
+      let inQuotes = false;
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        const next = text[i + 1];
+
+        if (ch === '"' && inQuotes && next === '"') { cur += '"'; i++; continue; }
+        if (ch === '"') { inQuotes = !inQuotes; continue; }
+
+        if (ch === "," && !inQuotes) { row.push(cur); cur = ""; continue; }
+        if ((ch === "\n" || ch === "\r") && !inQuotes) {
+          if (cur.length || row.length) { row.push(cur); rows.push(row); }
+          cur = ""; row = [];
+          continue;
+        }
+        cur += ch;
+      }
+      if (cur.length || row.length) { row.push(cur); rows.push(row); }
+      return rows;
+    }
+
+    function toNum(x) {
+      const v = parseFloat(String(x ?? "").trim().replace(",", "."));
+      return Number.isFinite(v) ? v : null;
+    }
+
+    function normalize(s) {
+      return String(s ?? "").toLowerCase().trim();
+    }
+
+    function escHtml(s) {
+      return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function findColIndex(header, candidates) {
+      const h = header.map(x => normalize(x));
+      for (const c of candidates) {
+        const i = h.indexOf(normalize(c));
+        if (i !== -1) return i;
+      }
+      return -1;
+    }
+
+    function renderMarkers(filterText) {
+      layer.clearLayers();
+
+      const ft = normalize(filterText);
+      const filtered = ft
+        ? items.filter(it => normalize(it.search).includes(ft))
+        : items.slice();
+
+      // Dodaj markere
+      for (const it of filtered) {
+        const popupHtml = `
+          <div class="popup">
+            <b>${escHtml(it.naziv)}</b><br>
+            ${escHtml(it.adresa)}<br>
+            ${escHtml(it.pbr)} ${escHtml(it.mjesto)}<br>
+            <hr>
+            ${it.tel ? `<b>Telefon:</b> ${escHtml(it.tel)}<br>` : ""}
+            ${it.email ? `<b>E-mail:</b> ${escHtml(it.email)}<br>` : ""}
+            ${it.web ? `<b>Web:</b> <a href="${escHtml(it.web)}" target="_blank" rel="noopener">${escHtml(it.web)}</a><br>` : ""}
+            ${it.opis ? `<hr><div>${escHtml(it.opis)}</div>` : ""}
+          </div>
+        `;
+
+        L.marker([it.lat, it.lon])
+          .bindTooltip(it.naziv || "Partner")
+          .bindPopup(popupHtml, { maxWidth: 380 })
+          .addTo(layer);
+      }
+
+      statusEl.textContent = `Prikazano: ${filtered.length} / ${items.length}`;
+
+      // Ako imamo barem 1 marker, fitaj view
+      if (filtered.length > 0) {
+        const bounds = L.latLngBounds(filtered.map(it => [it.lat, it.lon]));
+        map.fitBounds(bounds.pad(0.12));
+      }
+    }
+
+    async function loadData() {
+      statusEl.textContent = "Učitavam podatke…";
+
+      const res = await fetch(SHEET_CSV_URL, { cache: "no-store" });
+      if (!res.ok) throw new Error("Ne mogu učitati CSV (HTTP " + res.status + ")");
+
+      const csvText = await res.text();
+      const table = parseCSV(csvText);
+      if (table.length < 2) throw new Error("CSV nema podataka.");
+
+      const header = table[0];
+
+      // Pokušaj pronaći stupce (prilagođeno različitim nazivima)
+      const iNaziv  = findColIndex(header, ["Naziv", "Naziv_firme", "Firma", "Company"]);
+      const iAdresa = findColIndex(header, ["Adresa", "Ulica", "Address"]);
+      const iMjesto = findColIndex(header, ["Mjesto", "Grad", "City"]);
+      const iPbr    = findColIndex(header, ["Poštanski broj", "Postanski broj", "PBR", "Zip", "Postal"]);
+      const iLat    = findColIndex(header, ["Latitude", "Lat"]);
+      const iLon    = findColIndex(header, ["Longitude", "Lon", "Lng"]);
+      const iTel    = findColIndex(header, ["Telefon", "Tel", "Phone"]);
+      const iEmail  = findColIndex(header, ["E-mail", "Email", "Mail"]);
+      const iWeb    = findColIndex(header, ["Web", "Website", "URL"]);
+      const iOpis   = findColIndex(header, ["Opis", "Napomena", "Description"]);
+
+      if (iLat === -1 || iLon === -1) {
+        throw new Error("U tablici ne nalazim stupce 'Latitude' i 'Longitude'.");
+      }
+
+      const out = [];
+      for (let r = 1; r < table.length; r++) {
+        const row = table[r];
+
+        const lat = toNum(row[iLat]);
+        const lon = toNum(row[iLon]);
+        if (lat === null || lon === null) continue;
+
+        const naziv  = iNaziv  !== -1 ? (row[iNaziv]  ?? "") : "";
+        const adresa = iAdresa !== -1 ? (row[iAdresa] ?? "") : "";
+        const mjesto = iMjesto !== -1 ? (row[iMjesto] ?? "") : "";
+        const pbr    = iPbr    !== -1 ? (row[iPbr]    ?? "") : "";
+
+        const tel   = iTel   !== -1 ? (row[iTel]   ?? "") : "";
+        const email = iEmail !== -1 ? (row[iEmail] ?? "") : "";
+        const web   = iWeb   !== -1 ? (row[iWeb]   ?? "") : "";
+        const opis  = iOpis  !== -1 ? (row[iOpis]  ?? "") : "";
+
+        out.push({
+          lat, lon,
+          naziv, adresa, mjesto, pbr,
+          tel, email, web, opis,
+          search: `${naziv} ${adresa} ${mjesto} ${pbr} ${tel} ${email} ${web} ${opis}`
+        });
+      }
+
+      items = out;
+
+      if (items.length === 0) {
+        statusEl.textContent = "Nema valjanih koordinata u tablici (Latitude/Longitude).";
+        return;
+      }
+
+      renderMarkers(qEl.value);
+    }
+
+    // Učitavanje + jednostavna pretraga
+    qEl.addEventListener("input", () => renderMarkers(qEl.value));
+    btnReset.addEventListener("click", () => { qEl.value = ""; renderMarkers(""); });
+
+    // Auto-refresh (svakih 60 sek) – kad dodaš partnera u Sheet, samo pričekaj ili refreshaj stranicu
+    setInterval(() => {
+      loadData().catch(err => {
+        console.error(err);
+        statusEl.textContent = "Greška pri osvježavanju podataka (vidi konzolu).";
+      });
+    }, 60000);
+
+    loadData().catch(err => {
+      console.error(err);
+      statusEl.textContent = "Greška: " + err.message;
+      alert("Greška: " + err.message);
+    });
+  </script>
+</body>
+</html>
