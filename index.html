@@ -22,7 +22,7 @@
       border: 1px solid #ddd;
       border-radius: 10px;
       padding: 10px;
-      max-width: 1100px;
+      max-width: 1200px;
     }
     .topbar input {
       flex: 1;
@@ -49,16 +49,40 @@
       left: 16px;
       background: rgba(255, 255, 255, 0.92);
       border: 1px solid #ddd;
-      border-radius: 10px;
+      border-radius: 12px;
       padding: 10px 12px;
       font-family: Arial, sans-serif;
       font-size: 13px;
       line-height: 1.3;
-      max-width: 260px;
+      max-width: 320px;
+      user-select: none;
     }
     .legend-title { font-weight: 700; margin-bottom: 8px; }
-    .legend-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-    .swatch { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #00000022; }
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+      cursor: pointer;
+    }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid #00000022;
+      flex: 0 0 auto;
+    }
+    .legend-row.off {
+      opacity: 0.35;
+    }
+    .legend-row .label {
+      flex: 1;
+    }
+    .hint {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #444;
+    }
   </style>
 </head>
 
@@ -66,15 +90,15 @@
   <div class="topbar">
     <input id="q" type="text" placeholder="Pretraži po ID / nazivu / struci / mjestu / adresi..." />
     <button id="btnReset" type="button">Reset</button>
+    <button id="btnAllOn" type="button">Sve uključi</button>
+    <button id="btnAllOff" type="button">Sve isključi</button>
     <span class="status" id="status">Učitavam podatke…</span>
   </div>
 
   <div class="legend" id="legend">
     <div class="legend-title">Struka</div>
-    <div class="legend-row"><span class="swatch" style="background:red;"></span> Instalater(i)</div>
-    <div class="legend-row"><span class="swatch" style="background:blue;"></span> Arhitekt(i)</div>
-    <div class="legend-row"><span class="swatch" style="background:green;"></span> Prodavač(i)</div>
-    <div class="legend-row"><span class="swatch" style="background:gray;"></span> Ostalo / prazno</div>
+    <div id="legendRows"></div>
+    <div class="hint">Klik na struku: uključi/isključi</div>
   </div>
 
   <div id="map"></div>
@@ -92,27 +116,42 @@
     const statusEl = document.getElementById("status");
     const qEl = document.getElementById("q");
     const btnReset = document.getElementById("btnReset");
+    const btnAllOn = document.getElementById("btnAllOn");
+    const btnAllOff = document.getElementById("btnAllOff");
 
-    // VAŽNO: ključevi su malim slovima jer struku normaliziramo na lowercase
-    const STRUKA_BOJE = {
-      "instalater": "red",
-      "instalateri": "red",
-      "arhitekt": "blue",
-      "arhitekti": "blue",
-      "prodavač": "green",
-      "prodavac": "green",
-      "prodavači": "green",
-      "prodavaci": "green",
-      "građevinar": "green",
-      "građevinari": "green",
-      "održavanje zgrada": "yellow",
-      "strojarski projektant": "orange"
-    };
+    // Definicija struka + boja + ključevi (kako se pojavljuje u tablici nakon toLowerCase().trim())
+    const STRUKE = [
+      { label: "Instalater(i)", color: "red", keys: ["instalater", "instalateri"] },
+      { label: "Arhitekt(i)", color: "blue", keys: ["arhitekt", "arhitekti"] },
+      { label: "Prodavač(i)", color: "green", keys: ["prodavač", "prodavac", "prodavači", "prodavaci"] },
+      { label: "Građevinar(i)", color: "green", keys: ["građevinar", "gradevinar", "građevinari", "gradevinari"] },
+      { label: "Održavanje zgrada", color: "yellow", keys: ["održavanje zgrada", "odrzavanje zgrada"] },
+      { label: "Strojarski projektant", color: "orange", keys: ["strojarski projektant"] }
+    ];
+
+    // Mapiranje ključeva na boje (automatski)
+    const STRUKA_BOJE = {};
+    for (const s of STRUKE) {
+      for (const k of s.keys) STRUKA_BOJE[k] = s.color;
+    }
+
+    function normalizeStruka(struka) {
+      return String(struka || "").toLowerCase().trim();
+    }
 
     function getColorByStruka(struka) {
-      const key = String(struka || "").toLowerCase().trim();
+      const key = normalizeStruka(struka);
       return STRUKA_BOJE[key] || "gray";
     }
+
+    // Aktivne struke (toggle). Default: sve iz STRUKE uključeno
+    const activeStrukaKeys = new Set();
+    for (const s of STRUKE) {
+      for (const k of s.keys) activeStrukaKeys.add(k);
+    }
+
+    // Ako želiš da "Ostalo/prazno" bude prikazano, drži true
+    let showOther = true;
 
     let items = [];
 
@@ -171,11 +210,67 @@
       return "https://" + u;
     }
 
+    function isStrukaActive(struka) {
+      const key = normalizeStruka(struka);
+      const known = key in STRUKA_BOJE;
+      if (!key) return showOther;
+      if (!known) return showOther;
+      return activeStrukaKeys.has(key);
+    }
+
+    function buildLegend() {
+      const container = document.getElementById("legendRows");
+      container.innerHTML = "";
+
+      for (const s of STRUKE) {
+        // Legend row predstavlja cijeli set ključeva (npr. prodavač/prodavac/prodavači/prodavaci)
+        const anyOn = s.keys.some(k => activeStrukaKeys.has(k));
+
+        const row = document.createElement("div");
+        row.className = "legend-row" + (anyOn ? "" : " off");
+        row.dataset.primaryKey = s.keys[0];
+        row.innerHTML = `
+          <span class="swatch" style="background:${s.color};"></span>
+          <span class="label">${s.label}</span>
+        `;
+
+        row.addEventListener("click", () => {
+          const nowOn = s.keys.some(k => activeStrukaKeys.has(k));
+          if (nowOn) {
+            for (const k of s.keys) activeStrukaKeys.delete(k);
+          } else {
+            for (const k of s.keys) activeStrukaKeys.add(k);
+          }
+          buildLegend();
+          renderMarkers(qEl.value);
+        });
+
+        container.appendChild(row);
+      }
+
+      // Ostalo/prazno toggle
+      const otherRow = document.createElement("div");
+      otherRow.className = "legend-row" + (showOther ? "" : " off");
+      otherRow.innerHTML = `
+        <span class="swatch" style="background:gray;"></span>
+        <span class="label">Ostalo / prazno</span>
+      `;
+      otherRow.addEventListener("click", () => {
+        showOther = !showOther;
+        buildLegend();
+        renderMarkers(qEl.value);
+      });
+      container.appendChild(otherRow);
+    }
+
     function renderMarkers(filterText) {
       layer.clearLayers();
 
       const ft = normalize(filterText);
-      const filtered = ft ? items.filter(it => normalize(it.search).includes(ft)) : items.slice();
+      const filteredBase = ft ? items.filter(it => normalize(it.search).includes(ft)) : items.slice();
+
+      // Prvo filtriraj po strukama (toggle)
+      const filtered = filteredBase.filter(it => isStrukaActive(it.struka));
 
       for (const it of filtered) {
         const webLink = it.web ? normalizeWeb(it.web) : "";
@@ -281,12 +376,29 @@
         return;
       }
 
+      buildLegend();
       renderMarkers(qEl.value);
     }
 
     qEl.addEventListener("input", () => renderMarkers(qEl.value));
     btnReset.addEventListener("click", () => { qEl.value = ""; renderMarkers(""); });
 
+    btnAllOn.addEventListener("click", () => {
+      activeStrukaKeys.clear();
+      for (const s of STRUKE) for (const k of s.keys) activeStrukaKeys.add(k);
+      showOther = true;
+      buildLegend();
+      renderMarkers(qEl.value);
+    });
+
+    btnAllOff.addEventListener("click", () => {
+      activeStrukaKeys.clear();
+      showOther = false;
+      buildLegend();
+      renderMarkers(qEl.value);
+    });
+
+    // Auto-refresh: svake 1 minute
     setInterval(() => {
       loadData().catch(err => {
         console.error(err);
@@ -302,5 +414,3 @@
   </script>
 </body>
 </html>
-
-
