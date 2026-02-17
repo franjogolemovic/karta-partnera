@@ -146,7 +146,7 @@
         };
 
         function getColorByStruka(struka) {
-            const key = String(struka ? ? "").toLowerCase().trim();
+            const key = String(struka ? struka : "").toLowerCase().trim();
             return STRUKA_BOJE[key] || "gray";
         }
 
@@ -196,16 +196,16 @@
         }
 
         function toNum(x) {
-            const v = parseFloat(String(x ? ? "").trim().replace(",", "."));
+            const v = parseFloat(String(x ? x : "").trim().replace(",", "."));
             return Number.isFinite(v) ? v : null;
         }
 
         function normalize(s) {
-            return String(s ? ? "").toLowerCase().trim();
+            return String(s ? s : "").toLowerCase().trim();
         }
 
         function escHtml(s) {
-            return String(s ? ? "")
+            return String(s ? s : "")
                 .replaceAll("&", "&amp;")
                 .replaceAll("<", "&lt;")
                 .replaceAll(">", "&gt;")
@@ -219,7 +219,7 @@
         }
 
         function normalizeWeb(url) {
-            const u = String(url ? ? "").trim();
+            const u = String(url ? url : "").trim();
             if (!u) return "";
             if (u.startsWith("http://") || u.startsWith("https://")) return u;
             return "https://" + u;
@@ -359,5 +359,3 @@
 </body>
 
 </html>
-
-
